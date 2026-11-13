@@ -1,33 +1,63 @@
 name: CI
-
 on:
   push:
-    branches: [main]
   pull_request:
-    branches: [main]
-
 jobs:
-  build:
+  demo-image:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Build demo API image
+        run: docker build -f demo/api/Dockerfile -t pgpa-demo-api .
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          node-version: 20
-
-      # Uncomment and adjust the steps below to match your project's setup
-
-      # - name: Install dependencies
-      #   run: npm ci
-
-      # - name: Lint
-      #   run: npm run lint
-
-      # - name: Run tests
-      #   run: npm test
-
-      # - name: Build
-      #   run: npm run build
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo build --workspace --release
+      - run: cargo run -- --help
+      - run: cargo run -- explain --help
+      - run: cargo run -- run --help
+      - run: cargo run -- locks --help
+  postgres-integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [16, 17, 18]
+    runs-on: ubuntu-latest
+    env:
+      PGPA_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/pgpa_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Start PostgreSQL
+        run: >-
+          docker run -d --name pgpa-postgres
+          -e POSTGRES_DB=pgpa_test
+          -e POSTGRES_USER=postgres
+          -e POSTGRES_PASSWORD=postgres
+          -p 5432:5432
+          postgres:${{ matrix.postgres }}
+          postgres -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 60); do
+            if docker exec pgpa-postgres pg_isready -U postgres -d pgpa_test; then exit 0; fi
+            sleep 2
+          done
+          docker logs pgpa-postgres
+          exit 1
+      - run: cargo test --workspace --test postgres_integration -- --nocapture
