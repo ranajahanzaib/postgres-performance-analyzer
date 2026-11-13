@@ -1,0 +1,15 @@
+[package]
+name = "pgpa-demo-api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+axum = { version = "0.8", features = ["query", "json"] }
+chrono = { version = "0.4", features = ["serde"] }
+deadpool-postgres = "0.14"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"] }
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
+tower-http = { version = "0.6", features = ["trace"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

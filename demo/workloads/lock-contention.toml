@@ -1,0 +1,23 @@
+[workload]
+name = "order-status-contention"
+version = 1
+duration_seconds = 10
+warmup_seconds = 0
+cooldown_seconds = 1
+target_rps = 10
+max_in_flight = 128
+seed = 42017
+application_version = "pgpa-demo-api-0.1.0"
+query_variant = "lock_contention_baseline"
+
+[target]
+type = "http"
+base_url = "http://localhost:8080"
+
+[[operations]]
+id = "update_hot_order_status"
+method = "POST"
+path = "/orders/1/status?hold_ms=150"
+weight = 1
+body = "{\"status\":\"complete\",\"hold_ms\":150}"
+content_type = "application/json"

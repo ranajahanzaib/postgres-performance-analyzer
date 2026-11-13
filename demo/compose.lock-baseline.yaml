@@ -1,0 +1,4 @@
+services:
+  api:
+    environment:
+      ORDER_QUERY_VARIANT: lock_contention_baseline

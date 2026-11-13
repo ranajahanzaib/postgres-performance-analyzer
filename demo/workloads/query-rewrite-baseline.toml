@@ -1,0 +1,21 @@
+[workload]
+name = "orders-search-query-rewrite"
+version = 1
+duration_seconds = 20
+warmup_seconds = 3
+cooldown_seconds = 1
+target_rps = 15
+max_in_flight = 16
+seed = 42017
+application_version = "pgpa-demo-api-0.1.0"
+query_variant = "query_rewrite_baseline"
+
+[target]
+type = "http"
+base_url = "http://localhost:8080"
+
+[[operations]]
+id = "search_orders"
+method = "GET"
+path = "/orders/search?tenant_id={tenant_id}&status={status}&date={date}&next_date={next_date}"
+weight = 1

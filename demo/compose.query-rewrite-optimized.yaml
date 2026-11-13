@@ -1,0 +1,4 @@
+services:
+  api:
+    environment:
+      ORDER_QUERY_VARIANT: query_rewrite_optimized

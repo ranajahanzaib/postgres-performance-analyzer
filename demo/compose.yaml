@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: pgpa_demo
+      POSTGRES_USER: pgpa_admin
+      POSTGRES_PASSWORD: pgpa_admin
+    command:
+      [
+        "postgres",
+        "-c",
+        "shared_preload_libraries=pg_stat_statements",
+        "-c",
+        "pg_stat_statements.track=all",
+      ]
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pgpa_admin -d pgpa_demo"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - pgpa_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+  api:
+    build:
+      context: ..
+      dockerfile: demo/api/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://pgpa:pgpa@postgres:5432/pgpa_demo
+      ORDER_QUERY_VARIANT: missing_index_baseline
+      RUST_LOG: info,tower_http=info
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+volumes:
+  pgpa_data:
