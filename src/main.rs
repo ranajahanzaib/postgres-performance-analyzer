@@ -576,9 +576,21 @@ async fn query_stats(c: &Client, include_sql: bool) -> Result<Vec<QueryStat>> {
     if ext.is_none() {
         return Ok(vec![]);
     }
-    let sql = "SELECT dbid::bigint, userid::bigint, queryid::bigint, toplevel, calls::bigint, total_exec_time::float8, mean_exec_time::float8, max_exec_time::float8, rows::bigint, shared_blks_hit::bigint, shared_blks_read::bigint, temp_blks_read::bigint, temp_blks_written::bigint, query, plans::bigint, total_plan_time::float8, shared_blks_dirtied::bigint, shared_blks_written::bigint, blk_read_time::float8, blk_write_time::float8, wal_bytes::float8 FROM pg_stat_statements WHERE dbid=(SELECT oid FROM pg_database WHERE datname=current_database())";
+    let version: i32 = c
+        .query_one("SELECT current_setting('server_version_num')::int", &[])
+        .await
+        .map(|r| r.get(0))
+        .unwrap_or(160000);
+    let (read_col, write_col) = if version >= 170000 {
+        ("shared_blk_read_time", "shared_blk_write_time")
+    } else {
+        ("blk_read_time", "blk_write_time")
+    };
+    let sql = format!(
+        "SELECT dbid::bigint, userid::bigint, queryid::bigint, toplevel, calls::bigint, total_exec_time::float8, mean_exec_time::float8, max_exec_time::float8, rows::bigint, shared_blks_hit::bigint, shared_blks_read::bigint, temp_blks_read::bigint, temp_blks_written::bigint, query, plans::bigint, total_plan_time::float8, shared_blks_dirtied::bigint, shared_blks_written::bigint, {read_col}::float8, {write_col}::float8, wal_bytes::float8 FROM pg_stat_statements WHERE dbid=(SELECT oid FROM pg_database WHERE datname=current_database())"
+    );
     let rows = c
-        .query(sql, &[])
+        .query(&sql, &[])
         .await
         .context("Cannot read pg_stat_statements; check extension and role permissions")?;
     Ok(rows

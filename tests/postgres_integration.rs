@@ -56,11 +56,16 @@ async fn postgres_stats_explain_and_lock_blocking_are_observable() {
         .unwrap()
         .get::<_, i64>(0);
     assert!(stats > 0);
+    let (read_col, write_col) = if version >= 170000 {
+        ("shared_blk_read_time", "shared_blk_write_time")
+    } else {
+        ("blk_read_time", "blk_write_time")
+    };
+    let compat_sql = format!(
+        "SELECT toplevel, plans, total_plan_time, shared_blks_dirtied, shared_blks_written, {read_col}, {write_col}, wal_bytes FROM pg_stat_statements LIMIT 1"
+    );
     let _schema_compatibility = first
-        .query_one(
-            "SELECT toplevel, plans, total_plan_time, shared_blks_dirtied, shared_blks_written, blk_read_time, blk_write_time, wal_bytes FROM pg_stat_statements LIMIT 1",
-            &[],
-        )
+        .query_one(&compat_sql, &[])
         .await
         .expect("PostgreSQL 16+ pg_stat_statements fields are available");
 
