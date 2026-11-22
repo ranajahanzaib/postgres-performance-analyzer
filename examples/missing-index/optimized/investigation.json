@@ -1,0 +1,257 @@
+{
+  "schema_version": 1,
+  "id": "f5b4c9e2-83a6-5b6f-c821-29340159b202",
+  "captured_at": "2026-11-20T10:15:30Z",
+  "duration_seconds": 20.0,
+  "server_version": "PostgreSQL 17.1 (Debian 17.1-1.pgdg120+1)",
+  "database": "pgpa_demo",
+  "role": "pgpa",
+  "settings": {
+    "TimeZone": "UTC",
+    "default_statistics_target": "100",
+    "effective_cache_size": "4GB",
+    "effective_io_concurrency": "1",
+    "jit": "off",
+    "max_parallel_workers_per_gather": "2",
+    "random_page_cost": "4",
+    "shared_buffers": "128MB",
+    "track_io_timing": "on",
+    "track_planning": "on",
+    "work_mem": "4MB"
+  },
+  "statements_available": true,
+  "include_sql": false,
+  "queries": [
+    {
+      "dbid": 16384,
+      "userid": 16385,
+      "queryid": 4210992384729103819,
+      "toplevel": true,
+      "calls": 210,
+      "total_exec_time": 25.20,
+      "plans": 210,
+      "total_plan_time": 38.20,
+      "mean_exec_time": 0.120,
+      "max_exec_time": null,
+      "rows": 10500,
+      "shared_blks_hit": 10080,
+      "shared_blks_read": 0,
+      "shared_blks_dirtied": 0,
+      "shared_blks_written": 0,
+      "temp_blks_read": 0,
+      "temp_blks_written": 0,
+      "blk_read_time": 0.0,
+      "blk_write_time": 0.0,
+      "wal_bytes": 0.0,
+      "query": null
+    },
+    {
+      "dbid": 16384,
+      "userid": 16385,
+      "queryid": 7921820491823719284,
+      "toplevel": true,
+      "calls": 60,
+      "total_exec_time": 15.20,
+      "plans": 60,
+      "total_plan_time": 6.00,
+      "mean_exec_time": 0.253,
+      "max_exec_time": null,
+      "rows": 60,
+      "shared_blks_hit": 180,
+      "shared_blks_read": 0,
+      "shared_blks_dirtied": 0,
+      "shared_blks_written": 0,
+      "temp_blks_read": 0,
+      "temp_blks_written": 0,
+      "blk_read_time": 0.0,
+      "blk_write_time": 0.0,
+      "wal_bytes": 0.0,
+      "query": null
+    },
+    {
+      "dbid": 16384,
+      "userid": 16385,
+      "queryid": 3829102938472619482,
+      "toplevel": true,
+      "calls": 30,
+      "total_exec_time": 18.50,
+      "plans": 30,
+      "total_plan_time": 3.70,
+      "mean_exec_time": 0.617,
+      "max_exec_time": null,
+      "rows": 30,
+      "shared_blks_hit": 120,
+      "shared_blks_read": 0,
+      "shared_blks_dirtied": 0,
+      "shared_blks_written": 0,
+      "temp_blks_read": 0,
+      "temp_blks_written": 0,
+      "blk_read_time": 0.0,
+      "blk_write_time": 0.0,
+      "wal_bytes": 0.0,
+      "query": null
+    }
+  ],
+  "tables": [
+    {
+      "schema": "public",
+      "name": "customers",
+      "live_tuples": 25000.0,
+      "seq_scan": 0,
+      "idx_scan": 60,
+      "size_bytes": 2457600
+    },
+    {
+      "schema": "public",
+      "name": "order_items",
+      "live_tuples": 400000.0,
+      "seq_scan": 0,
+      "idx_scan": 0,
+      "size_bytes": 32768000
+    },
+    {
+      "schema": "public",
+      "name": "orders",
+      "live_tuples": 200000.0,
+      "seq_scan": 0,
+      "idx_scan": 270,
+      "size_bytes": 18432000
+    },
+    {
+      "schema": "public",
+      "name": "payments",
+      "live_tuples": 200000.0,
+      "seq_scan": 0,
+      "idx_scan": 0,
+      "size_bytes": 16384000
+    },
+    {
+      "schema": "public",
+      "name": "products",
+      "live_tuples": 1000.0,
+      "seq_scan": 0,
+      "idx_scan": 0,
+      "size_bytes": 98304
+    },
+    {
+      "schema": "public",
+      "name": "tenants",
+      "live_tuples": 10.0,
+      "seq_scan": 0,
+      "idx_scan": 0,
+      "size_bytes": 16384
+    }
+  ],
+  "indexes": [
+    {
+      "schema": "public",
+      "table": "customers",
+      "name": "customers_pkey",
+      "definition": "CREATE UNIQUE INDEX customers_pkey ON public.customers USING btree (id)",
+      "valid": true,
+      "scans": 60,
+      "size_bytes": 589824
+    },
+    {
+      "schema": "public",
+      "table": "customers",
+      "name": "customers_tenant_id_idx",
+      "definition": "CREATE INDEX customers_tenant_id_idx ON public.customers USING btree (tenant_id)",
+      "valid": true,
+      "scans": 0,
+      "size_bytes": 589824
+    },
+    {
+      "schema": "public",
+      "table": "order_items",
+      "name": "order_items_order_id_idx",
+      "definition": "CREATE INDEX order_items_order_id_idx ON public.order_items USING btree (order_id)",
+      "valid": true,
+      "scans": 0,
+      "size_bytes": 9437184
+    },
+    {
+      "schema": "public",
+      "table": "order_items",
+      "name": "order_items_pkey",
+      "definition": "CREATE UNIQUE INDEX order_items_pkey ON public.order_items USING btree (id)",
+      "valid": true,
+      "scans": 0,
+      "size_bytes": 9437184
+    },
+    {
+      "schema": "public",
+      "table": "orders",
+      "name": "idx_orders_tenant_status_created",
+      "definition": "CREATE INDEX idx_orders_tenant_status_created ON public.orders USING btree (tenant_id, status, created_at DESC)",
+      "valid": true,
+      "scans": 210,
+      "size_bytes": 5242880
+    },
+    {
+      "schema": "public",
+      "table": "orders",
+      "name": "orders_customer_id_idx",
+      "definition": "CREATE INDEX orders_customer_id_idx ON public.orders USING btree (customer_id)",
+      "valid": true,
+      "scans": 30,
+      "size_bytes": 4718592
+    },
+    {
+      "schema": "public",
+      "table": "orders",
+      "name": "orders_pkey",
+      "definition": "CREATE UNIQUE INDEX orders_pkey ON public.orders USING btree (id)",
+      "valid": true,
+      "scans": 60,
+      "size_bytes": 4718592
+    },
+    {
+      "schema": "public",
+      "table": "payments",
+      "name": "payments_order_id_idx",
+      "definition": "CREATE INDEX payments_order_id_idx ON public.payments USING btree (order_id)",
+      "valid": true,
+      "scans": 0,
+      "size_bytes": 4718592
+    },
+    {
+      "schema": "public",
+      "table": "payments",
+      "name": "payments_pkey",
+      "definition": "CREATE UNIQUE INDEX payments_pkey ON public.payments USING btree (id)",
+      "valid": true,
+      "scans": 0,
+      "size_bytes": 4718592
+    },
+    {
+      "schema": "public",
+      "table": "products",
+      "name": "products_pkey",
+      "definition": "CREATE UNIQUE INDEX products_pkey ON public.products USING btree (id)",
+      "valid": true,
+      "scans": 0,
+      "size_bytes": 32768
+    },
+    {
+      "schema": "public",
+      "table": "products",
+      "name": "products_sku_key",
+      "definition": "CREATE UNIQUE INDEX products_sku_key ON public.products USING btree (sku)",
+      "valid": true,
+      "scans": 0,
+      "size_bytes": 32768
+    },
+    {
+      "schema": "public",
+      "table": "tenants",
+      "name": "tenants_pkey",
+      "definition": "CREATE UNIQUE INDEX tenants_pkey ON public.tenants USING btree (id)",
+      "valid": true,
+      "scans": 0,
+      "size_bytes": 16384
+    }
+  ],
+  "locks": [],
+  "capture_issues": []
+}

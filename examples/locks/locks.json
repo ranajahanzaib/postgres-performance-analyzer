@@ -1,0 +1,43 @@
+[
+  {
+    "sampled_at": "2026-11-20T10:20:00.250Z",
+    "waiters": [
+      {
+        "pid": 4015,
+        "wait_event_type": "Lock",
+        "wait_event": "transactionid",
+        "state": "active",
+        "query_start": "2026-11-20T10:19:59.800Z",
+        "transaction_start": "2026-11-20T10:19:59.800Z",
+        "role": "pgpa",
+        "application_name": "pgpa-demo-api",
+        "query_id": 8920192847192837461,
+        "lock_details": [
+          {
+            "granted": false,
+            "locktype": "transactionid",
+            "mode": "ShareLock",
+            "relation": null,
+            "transactionid": "9812",
+            "virtualxid": "3/140"
+          }
+        ],
+        "blocker_sessions": [
+          {
+            "application_name": "pgpa-demo-api",
+            "pid": 4012,
+            "query_id": 8920192847192837461,
+            "query_start": "2026-11-20T10:19:55.100Z",
+            "role": "pgpa",
+            "state": "idle in transaction",
+            "wait_event": "ClientRead",
+            "wait_event_type": "Client",
+            "xact_start": "2026-11-20T10:19:55.100Z"
+          }
+        ],
+        "query": null,
+        "blockers": [4012]
+      }
+    ]
+  }
+]

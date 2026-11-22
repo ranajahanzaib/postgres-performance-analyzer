@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "id": "8eb2cd93-1230-5678-90bc-def012345678",
+  "label": "indexed",
+  "started_at": "2026-11-20T10:15:33Z",
+  "finished_at": "2026-11-20T10:15:53Z",
+  "workload_name": "orders-search",
+  "workload_version": 1,
+  "application_version": "pgpa-demo-api-0.1.0",
+  "query_variant": "missing_index_indexed",
+  "workload_hash_sha256": "a34db10217baad8ed465f127695165b8d5c98e5c811fda474bdb853756f8d932",
+  "target_origin": "http://localhost:8080",
+  "database": "pgpa_demo",
+  "postgres_version": "PostgreSQL 17.1 (Debian 17.1-1.pgdg120+1)",
+  "dataset_fingerprint_approx_sha256": "44b0de6808666aafb39f85bc823d9f168604e66b48b1e26b6056a03fdae11353",
+  "database_settings": {
+    "TimeZone": "UTC",
+    "default_statistics_target": "100",
+    "effective_cache_size": "4GB",
+    "effective_io_concurrency": "1",
+    "jit": "off",
+    "max_parallel_workers_per_gather": "2",
+    "random_page_cost": "4",
+    "shared_buffers": "128MB",
+    "track_io_timing": "on",
+    "track_planning": "on",
+    "work_mem": "4MB"
+  },
+  "index_definitions": [
+    "CREATE INDEX customers_tenant_id_idx ON public.customers USING btree (tenant_id)",
+    "CREATE INDEX idx_orders_tenant_status_created ON public.orders USING btree (tenant_id, status, created_at DESC)",
+    "CREATE INDEX order_items_order_id_idx ON public.order_items USING btree (order_id)",
+    "CREATE INDEX orders_customer_id_idx ON public.orders USING btree (customer_id)",
+    "CREATE INDEX payments_order_id_idx ON public.payments USING btree (order_id)",
+    "CREATE UNIQUE INDEX customers_pkey ON public.customers USING btree (id)",
+    "CREATE UNIQUE INDEX order_items_pkey ON public.order_items USING btree (id)",
+    "CREATE UNIQUE INDEX orders_pkey ON public.orders USING btree (id)",
+    "CREATE UNIQUE INDEX payments_pkey ON public.payments USING btree (id)",
+    "CREATE UNIQUE INDEX products_pkey ON public.products USING btree (id)",
+    "CREATE UNIQUE INDEX products_sku_key ON public.products USING btree (sku)",
+    "CREATE UNIQUE INDEX tenants_pkey ON public.tenants USING btree (id)"
+  ],
+  "duration_seconds": 20,
+  "warmup_seconds": 3,
+  "cooldown_seconds": 1,
+  "target_rps": 15,
+  "max_in_flight": 16,
+  "seed": 42017,
+  "operations": [
+    {
+      "id": "search_orders",
+      "method": "GET",
+      "weight": 7
+    },
+    {
+      "id": "get_order",
+      "method": "GET",
+      "weight": 2
+    },
+    {
+      "id": "customer_summary",
+      "method": "GET",
+      "weight": 1
+    }
+  ],
+  "metrics": {
+    "scheduled": 300,
+    "started": 300,
+    "completed": 300,
+    "successful": 300,
+    "failed": 0,
+    "dropped_at_concurrency_cap": 0,
+    "completion_wall_time_seconds": 20.02,
+    "throughput_requests_per_second": 14.99,
+    "error_rate": 0.0,
+    "failure_counts": {},
+    "latency_ms": {
+      "samples": 300,
+      "min": 0.15,
+      "mean": 0.42,
+      "median": 0.35,
+      "p90": 0.65,
+      "p95": 0.88,
+      "p99": 1.45,
+      "max": 2.10,
+      "standard_deviation": 0.22
+    },
+    "scheduling_delay_ms": {
+      "samples": 300,
+      "min": 0.02,
+      "mean": 0.25,
+      "median": 0.18,
+      "p90": 0.45,
+      "p95": 0.62,
+      "p99": 1.10,
+      "max": 1.50,
+      "standard_deviation": 0.18
+    },
+    "by_operation": {
+      "search_orders": {
+        "scheduled": 210,
+        "completed": 210,
+        "failed": 0,
+        "dropped_at_concurrency_cap": 0,
+        "latency_ms": {
+          "samples": 210,
+          "min": 0.25,
+          "mean": 0.45,
+          "median": 0.40,
+          "p90": 0.70,
+          "p95": 0.92,
+          "p99": 1.50,
+          "max": 2.10,
+          "standard_deviation": 0.20
+        }
+      },
+      "get_order": {
+        "scheduled": 60,
+        "completed": 60,
+        "failed": 0,
+        "dropped_at_concurrency_cap": 0,
+        "latency_ms": {
+          "samples": 60,
+          "min": 0.15,
+          "mean": 0.30,
+          "median": 0.26,
+          "p90": 0.45,
+          "p95": 0.52,
+          "p99": 0.68,
+          "max": 0.80,
+          "standard_deviation": 0.11
+        }
+      },
+      "customer_summary": {
+        "scheduled": 30,
+        "completed": 30,
+        "failed": 0,
+        "dropped_at_concurrency_cap": 0,
+        "latency_ms": {
+          "samples": 30,
+          "min": 0.42,
+          "mean": 0.68,
+          "median": 0.65,
+          "p90": 0.90,
+          "p95": 1.00,
+          "p99": 1.10,
+          "max": 1.15,
+          "standard_deviation": 0.14
+        }
+      }
+    }
+  }
+}
