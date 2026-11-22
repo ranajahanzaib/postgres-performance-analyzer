@@ -82,7 +82,7 @@ enum Command {
     },
     Diagnose {
         #[arg(long)]
-        capture: PathBuf,
+        capture: Option<PathBuf>,
         #[arg(long)]
         plan: Option<PathBuf>,
     },
@@ -1535,53 +1535,59 @@ fn load(p: &Path) -> Result<Snapshot> {
     }
     Ok(snapshot)
 }
-fn diagnose(p: PathBuf, plan_path: Option<PathBuf>) -> Result<()> {
-    let s = load(&p)?;
-    let mut n = 0;
-    if !s.statements_available {
-        println!(
-            "No query statistics captured. Ensure pg_stat_statements is installed and accessible."
-        );
-    } else {
-        for issue in &s.capture_issues {
-            println!(
-                "Capture limitation queryid={:?}: {}",
-                issue.query_id, issue.reason
-            );
-        }
-        for q in &s.queries {
-            if q.calls == 0 {
-                continue;
-            }
-            let ratio = q.shared_blks_read as f64 / (q.rows.max(1) as f64);
-            if q.total_exec_time > 100.0 && ratio > 1.0 {
-                n += 1;
-                println!(
-                    "HIGH_BUFFER_READS [medium confidence] queryid={} calls={} shared_reads={} rows={} total_exec_ms={:.2}\n  Evidence: {:.2} shared block reads per returned row.\n  Hypothesis: this query may be doing substantial buffer work. Inspect its plan and workload selectivity before considering a change.\n  Caveat: block reads may be cached and queryid may vary across server versions.",
-                    q.queryid, q.calls, q.shared_blks_read, q.rows, q.total_exec_time, ratio
-                )
-            }
-            if q.calls > 100 && q.total_exec_time > 500.0 {
-                n += 1;
-                println!(
-                    "REPEATED_EXECUTION_COST [medium confidence] queryid={} calls={} total_exec_ms={:.2} mean_ms={:.3}\n  Evidence: repeated calls contributed cumulative recorded execution time. Consider batching or reducing request frequency if semantics allow.",
-                    q.queryid, q.calls, q.total_exec_time, q.mean_exec_time
-                )
-            }
-        }
+fn diagnose(capture_path: Option<PathBuf>, plan_path: Option<PathBuf>) -> Result<()> {
+    if capture_path.is_none() && plan_path.is_none() {
+        bail!("At least one of --capture or --plan must be provided");
     }
-    for l in &s.locks {
-        n += 1;
-        println!(
-            "LOCK_WAIT_OBSERVED [high confidence] pid={} queryid={:?} event={:?} blockers={:?}",
-            l.pid, l.query_id, l.wait_event, l.blockers
-        )
+    let mut n = 0;
+    if let Some(p) = capture_path {
+        let s = load(&p)?;
+        if !s.statements_available {
+            println!(
+                "No query statistics captured. Ensure pg_stat_statements is installed and accessible."
+            );
+        } else {
+            for issue in &s.capture_issues {
+                println!(
+                    "Capture limitation queryid={:?}: {}",
+                    issue.query_id, issue.reason
+                );
+            }
+            for q in &s.queries {
+                if q.calls == 0 {
+                    continue;
+                }
+                let ratio = q.shared_blks_read as f64 / (q.rows.max(1) as f64);
+                if q.total_exec_time > 100.0 && ratio > 1.0 {
+                    n += 1;
+                    println!(
+                        "HIGH_BUFFER_READS [medium confidence] queryid={} calls={} shared_reads={} rows={} total_exec_ms={:.2}\n  Evidence: {:.2} shared block reads per returned row.\n  Hypothesis: this query may be doing substantial buffer work. Inspect its plan and workload selectivity before considering a change.\n  Caveat: block reads may be cached and queryid may vary across server versions.",
+                        q.queryid, q.calls, q.shared_blks_read, q.rows, q.total_exec_time, ratio
+                    )
+                }
+                if q.calls > 100 && q.total_exec_time > 500.0 {
+                    n += 1;
+                    println!(
+                        "REPEATED_EXECUTION_COST [medium confidence] queryid={} calls={} total_exec_ms={:.2} mean_ms={:.3}\n  Evidence: repeated calls contributed cumulative recorded execution time. Consider batching or reducing request frequency if semantics allow.",
+                        q.queryid, q.calls, q.total_exec_time, q.mean_exec_time
+                    )
+                }
+            }
+        }
+        for l in &s.locks {
+            n += 1;
+            println!(
+                "LOCK_WAIT_OBSERVED [high confidence] pid={} queryid={:?} event={:?} blockers={:?}",
+                l.pid, l.query_id, l.wait_event, l.blockers
+            )
+        }
     }
     if let Some(path) = plan_path {
-        let plan: plan::PlanDocument = serde_json::from_slice(
-            &fs::read(&path).with_context(|| format!("reading plan {}", path.display()))?,
-        )
-        .context("invalid normalized plan JSON")?;
+        let data = fs::read(&path).with_context(|| format!("reading plan {}", path.display()))?;
+        let value: serde_json::Value =
+            serde_json::from_slice(&data).context("invalid JSON in plan file")?;
+        let plan = plan::PlanDocument::parse(value, true)
+            .context("invalid PostgreSQL JSON EXPLAIN or normalized plan document")?;
         for finding in plan.findings() {
             n += 1;
             println!(
@@ -1812,10 +1818,36 @@ fn report(before: PathBuf, after: PathBuf, format: ReportFormat, output: PathBuf
     let b = load(&after)?;
     let before_run = load_run_summary(&before)?;
     let after_run = load_run_summary(&after)?;
-    let run_text = match (&before_run, &after_run) {
-        (Some(x), Some(y)) => format!("\n## HTTP workload\n\n| Metric | Before | After | Change |\n|---|---:|---:|---:|\n| p50 latency | {} | {} | {} |\n| p95 latency | {} | {} | {} |\n| p99 latency | {} | {} | {} |\n| throughput | {:.2} req/s | {:.2} req/s | {} |\n| errors | {} | {} | — |\n\nVerdict: INCONCLUSIVE (single trial; no run-to-run variation estimate). Query variants: {:?} → {:?}.\n", metric(x.metrics.latency_ms.median), metric(y.metrics.latency_ms.median), metric_change(x.metrics.latency_ms.median,y.metrics.latency_ms.median), metric(x.metrics.latency_ms.p95), metric(y.metrics.latency_ms.p95), metric_change(x.metrics.latency_ms.p95,y.metrics.latency_ms.p95), metric(x.metrics.latency_ms.p99), metric(y.metrics.latency_ms.p99), metric_change(x.metrics.latency_ms.p99,y.metrics.latency_ms.p99), x.metrics.throughput_requests_per_second, y.metrics.throughput_requests_per_second, change(x.metrics.throughput_requests_per_second,y.metrics.throughput_requests_per_second), metric(x.metrics.error_rate.map(|v|v*100.0)), metric(y.metrics.error_rate.map(|v|v*100.0)), x.query_variant,y.query_variant),
-        _ => "\nHTTP request latency was not captured in both artifacts; comparison verdict is INCONCLUSIVE.\n".to_string(),
+
+    let am: std::collections::HashMap<(i64, i64, i64, bool), &QueryStat> =
+        std::collections::HashMap::from_iter(
+            a.queries
+                .iter()
+                .map(|q| ((q.dbid, q.userid, q.queryid, q.toplevel), q)),
+        );
+    let mut matched_queries = Vec::new();
+    for q in &b.queries {
+        if let Some(x) = am.get(&(q.dbid, q.userid, q.queryid, q.toplevel)) {
+            matched_queries.push((*x, q));
+        }
+    }
+    let matched_count = matched_queries.len();
+
+    let before_indexes: std::collections::HashSet<_> = if let Some(ref r) = before_run {
+        r.index_definitions.iter().collect()
+    } else {
+        a.indexes.iter().map(|i| &i.definition).collect()
     };
+    let after_indexes: std::collections::HashSet<_> = if let Some(ref r) = after_run {
+        r.index_definitions.iter().collect()
+    } else {
+        b.indexes.iter().map(|i| &i.definition).collect()
+    };
+    let mut added_indexes: Vec<_> = after_indexes.difference(&before_indexes).copied().collect();
+    let mut removed_indexes: Vec<_> = before_indexes.difference(&after_indexes).copied().collect();
+    added_indexes.sort();
+    removed_indexes.sort();
+
     let mut safe_a = a.clone();
     let mut safe_b = b.clone();
     for query in safe_a.queries.iter_mut().chain(safe_b.queries.iter_mut()) {
@@ -1824,36 +1856,213 @@ fn report(before: PathBuf, after: PathBuf, format: ReportFormat, output: PathBuf
     for lock in safe_a.locks.iter_mut().chain(safe_b.locks.iter_mut()) {
         lock.query = None;
     }
+
     let body = match format {
-        ReportFormat::Terminal => format!(
-            "POSTGRESQL PERFORMANCE COMPARISON\nBefore: {} ({})\nAfter: {} ({})\nMatched PostgreSQL query deltas: {}\n{}\nRequest latency evidence is a single trial; interpret changes as observations, not a validated optimization.",
-            a.captured_at,
-            a.database,
-            b.captured_at,
-            b.database,
-            b.queries.len(),
-            run_text
-        ),
-        ReportFormat::Markdown => format!(
-            "# PostgreSQL comparison\n\n- Before: {}\n- After: {}\n- Database: {} → {}\n- Matched query deltas: {}\n\nPostgreSQL execution time is cumulative execution time in milliseconds, not request wall-clock latency.\n{}\n",
-            a.captured_at,
-            b.captured_at,
-            a.database,
-            b.database,
-            b.queries.len(),
-            run_text
-        ),
-        ReportFormat::Html => format!(
-            "<!doctype html><html lang=\"en\"><meta charset=utf-8><meta name=viewport content=\"width=device-width, initial-scale=1\"><title>PostgreSQL comparison</title><style>body{{font:16px system-ui,sans-serif;max-width:900px;margin:3rem auto;padding:0 1rem;color:#172033;background:#f7f8fa}}main{{background:white;border:1px solid #d9deea;border-radius:12px;padding:2rem}}table{{border-collapse:collapse;width:100%}}td,th{{text-align:left;padding:.65rem;border-bottom:1px solid #ddd}}code{{font-family:ui-monospace,monospace}}@media(prefers-color-scheme:dark){{body{{background:#10151f;color:#e6edf8}}main{{background:#171f2c;border-color:#344056}}td,th{{border-color:#344056}}}}</style><main><h1>PostgreSQL comparison</h1><p>Before: {}</p><p>After: {}</p><p>Database: {} → {}</p><p>Matched query deltas: {}</p><div>{}</div><p>Request latency is one-trial evidence; it does not estimate run-to-run variation.</p></main></html>",
-            a.captured_at,
-            b.captured_at,
-            html_escape(&a.database),
-            html_escape(&b.database),
-            b.queries.len(),
-            html_escape(&run_text).replace("\n", "<br>"),
-        ),
+        ReportFormat::Terminal => {
+            let mut s = format!(
+                "POSTGRESQL PERFORMANCE COMPARISON\nBefore: {} ({})\nAfter:  {} ({})\nMatched PostgreSQL query deltas: {}\n",
+                a.captured_at, a.database, b.captured_at, b.database, matched_count
+            );
+            if !matched_queries.is_empty() {
+                s += "\nPostgreSQL query deltas:\n";
+                for (x, q) in &matched_queries {
+                    s += &format!(
+                        "  queryid {}: exec total {:.2} -> {:.2} ms ({}) | calls {} -> {} | mean {:.3} -> {:.3} ms | shared reads {} -> {}\n",
+                        q.queryid,
+                        x.total_exec_time,
+                        q.total_exec_time,
+                        change(x.total_exec_time, q.total_exec_time),
+                        x.calls,
+                        q.calls,
+                        x.mean_exec_time,
+                        q.mean_exec_time,
+                        x.shared_blks_read,
+                        q.shared_blks_read
+                    );
+                }
+            }
+            if !added_indexes.is_empty() || !removed_indexes.is_empty() {
+                s += "\nIndex changes:\n";
+                for def in &added_indexes {
+                    s += &format!("  + Added:   {def}\n");
+                }
+                for def in &removed_indexes {
+                    s += &format!("  - Removed: {def}\n");
+                }
+            }
+            match (&before_run, &after_run) {
+                (Some(x), Some(y)) => {
+                    s += &format!(
+                        "\nHTTP workload:\n  p50 latency: {} -> {} ({})\n  p95 latency: {} -> {} ({})\n  p99 latency: {} -> {} ({})\n  Throughput:  {:.2} -> {:.2} req/s ({})\n  Errors:      {} -> {}\n\nVerdict: INCONCLUSIVE (single trial; no run-to-run variation estimate). Query variants: {:?} -> {:?}.\n",
+                        metric(x.metrics.latency_ms.median),
+                        metric(y.metrics.latency_ms.median),
+                        metric_change(x.metrics.latency_ms.median, y.metrics.latency_ms.median),
+                        metric(x.metrics.latency_ms.p95),
+                        metric(y.metrics.latency_ms.p95),
+                        metric_change(x.metrics.latency_ms.p95, y.metrics.latency_ms.p95),
+                        metric(x.metrics.latency_ms.p99),
+                        metric(y.metrics.latency_ms.p99),
+                        metric_change(x.metrics.latency_ms.p99, y.metrics.latency_ms.p99),
+                        x.metrics.throughput_requests_per_second,
+                        y.metrics.throughput_requests_per_second,
+                        change(
+                            x.metrics.throughput_requests_per_second,
+                            y.metrics.throughput_requests_per_second
+                        ),
+                        metric(x.metrics.error_rate.map(|v| v * 100.0)),
+                        metric(y.metrics.error_rate.map(|v| v * 100.0)),
+                        x.query_variant,
+                        y.query_variant
+                    );
+                }
+                _ => {
+                    s += "\nHTTP request latency was not captured in both artifacts; comparison verdict is INCONCLUSIVE.\n";
+                }
+            }
+            s += "Request latency evidence is a single trial; interpret changes as observations, not a validated optimization.";
+            s
+        }
+        ReportFormat::Markdown => {
+            let mut s = format!(
+                "# PostgreSQL comparison\n\n- **Before:** {}\n- **After:** {}\n- **Database:** {} → {}\n- **Matched query deltas:** {}\n\nPostgreSQL execution time is cumulative execution time in milliseconds, not request wall-clock latency.\n",
+                a.captured_at, b.captured_at, a.database, b.database, matched_count
+            );
+            if !matched_queries.is_empty() {
+                s += "\n## Matched PostgreSQL query deltas\n\n| Query ID | Calls | Total Time | Mean Time | Shared Reads |\n|---|---:|---:|---:|---:|\n";
+                for (x, q) in &matched_queries {
+                    s += &format!(
+                        "| `{}` | {} → {} | {:.2} → {:.2} ms ({}) | {:.3} → {:.3} ms ({}) | {} → {} ({}) |\n",
+                        q.queryid,
+                        x.calls,
+                        q.calls,
+                        x.total_exec_time,
+                        q.total_exec_time,
+                        change(x.total_exec_time, q.total_exec_time),
+                        x.mean_exec_time,
+                        q.mean_exec_time,
+                        change(x.mean_exec_time, q.mean_exec_time),
+                        x.shared_blks_read,
+                        q.shared_blks_read,
+                        change(x.shared_blks_read as f64, q.shared_blks_read as f64)
+                    );
+                }
+            }
+            if !added_indexes.is_empty() || !removed_indexes.is_empty() {
+                s += "\n## Index changes\n\n";
+                for def in &added_indexes {
+                    s += &format!("- **Added:** `{def}`\n");
+                }
+                for def in &removed_indexes {
+                    s += &format!("- **Removed:** `{def}`\n");
+                }
+            }
+            match (&before_run, &after_run) {
+                (Some(x), Some(y)) => {
+                    s += &format!(
+                        "\n## HTTP workload\n\n| Metric | Before | After | Change |\n|---|---:|---:|---:|\n| p50 latency | {} | {} | {} |\n| p95 latency | {} | {} | {} |\n| p99 latency | {} | {} | {} |\n| Throughput | {:.2} req/s | {:.2} req/s | {} |\n| Errors | {} | {} | — |\n\n**Verdict:** INCONCLUSIVE (single trial; no run-to-run variation estimate). Query variants: {:?} → {:?}.\n",
+                        metric(x.metrics.latency_ms.median),
+                        metric(y.metrics.latency_ms.median),
+                        metric_change(x.metrics.latency_ms.median, y.metrics.latency_ms.median),
+                        metric(x.metrics.latency_ms.p95),
+                        metric(y.metrics.latency_ms.p95),
+                        metric_change(x.metrics.latency_ms.p95, y.metrics.latency_ms.p95),
+                        metric(x.metrics.latency_ms.p99),
+                        metric(y.metrics.latency_ms.p99),
+                        metric_change(x.metrics.latency_ms.p99, y.metrics.latency_ms.p99),
+                        x.metrics.throughput_requests_per_second,
+                        y.metrics.throughput_requests_per_second,
+                        change(
+                            x.metrics.throughput_requests_per_second,
+                            y.metrics.throughput_requests_per_second
+                        ),
+                        metric(x.metrics.error_rate.map(|v| v * 100.0)),
+                        metric(y.metrics.error_rate.map(|v| v * 100.0)),
+                        x.query_variant,
+                        y.query_variant
+                    );
+                }
+                _ => {
+                    s += "\nHTTP request latency was not captured in both artifacts; comparison verdict is INCONCLUSIVE.\n";
+                }
+            }
+            s
+        }
+        ReportFormat::Html => {
+            let mut html_queries = String::new();
+            if !matched_queries.is_empty() {
+                html_queries.push_str("<h2>PostgreSQL query deltas</h2><table><thead><tr><th>Query ID</th><th>Calls</th><th>Total Exec Time</th><th>Mean Exec Time</th><th>Shared Reads</th></tr></thead><tbody>");
+                for (x, q) in &matched_queries {
+                    html_queries.push_str(&format!(
+                        "<tr><td><code>{}</code></td><td>{} → {}</td><td>{:.2} → {:.2} ms ({})</td><td>{:.3} → {:.3} ms ({})</td><td>{} → {} ({})</td></tr>",
+                        q.queryid,
+                        x.calls,
+                        q.calls,
+                        x.total_exec_time,
+                        q.total_exec_time,
+                        change(x.total_exec_time, q.total_exec_time),
+                        x.mean_exec_time,
+                        q.mean_exec_time,
+                        change(x.mean_exec_time, q.mean_exec_time),
+                        x.shared_blks_read,
+                        q.shared_blks_read,
+                        change(x.shared_blks_read as f64, q.shared_blks_read as f64)
+                    ));
+                }
+                html_queries.push_str("</tbody></table>");
+            }
+            let mut html_indexes = String::new();
+            if !added_indexes.is_empty() || !removed_indexes.is_empty() {
+                html_indexes.push_str("<h2>Index changes</h2><ul>");
+                for def in &added_indexes {
+                    html_indexes.push_str(&format!(
+                        "<li><strong>Added:</strong> <code>{}</code></li>",
+                        html_escape(def)
+                    ));
+                }
+                for def in &removed_indexes {
+                    html_indexes.push_str(&format!(
+                        "<li><strong>Removed:</strong> <code>{}</code></li>",
+                        html_escape(def)
+                    ));
+                }
+                html_indexes.push_str("</ul>");
+            }
+            let html_workload = match (&before_run, &after_run) {
+                (Some(x), Some(y)) => format!(
+                    "<h2>HTTP workload</h2><table><thead><tr><th>Metric</th><th>Before</th><th>After</th><th>Change</th></tr></thead><tbody><tr><td>p50 latency</td><td>{}</td><td>{}</td><td>{}</td></tr><tr><td>p95 latency</td><td>{}</td><td>{}</td><td>{}</td></tr><tr><td>p99 latency</td><td>{}</td><td>{}</td><td>{}</td></tr><tr><td>Throughput</td><td>{:.2} req/s</td><td>{:.2} req/s</td><td>{}</td></tr><tr><td>Errors</td><td>{}</td><td>{}</td><td>—</td></tr></tbody></table><p class=\"verdict\"><strong>Verdict:</strong> INCONCLUSIVE (single trial; no run-to-run variation estimate). Query variants: <code>{}</code> → <code>{}</code>.</p>",
+                    metric(x.metrics.latency_ms.median),
+                    metric(y.metrics.latency_ms.median),
+                    metric_change(x.metrics.latency_ms.median, y.metrics.latency_ms.median),
+                    metric(x.metrics.latency_ms.p95),
+                    metric(y.metrics.latency_ms.p95),
+                    metric_change(x.metrics.latency_ms.p95, y.metrics.latency_ms.p95),
+                    metric(x.metrics.latency_ms.p99),
+                    metric(y.metrics.latency_ms.p99),
+                    metric_change(x.metrics.latency_ms.p99, y.metrics.latency_ms.p99),
+                    x.metrics.throughput_requests_per_second,
+                    y.metrics.throughput_requests_per_second,
+                    change(x.metrics.throughput_requests_per_second, y.metrics.throughput_requests_per_second),
+                    metric(x.metrics.error_rate.map(|v| v * 100.0)),
+                    metric(y.metrics.error_rate.map(|v| v * 100.0)),
+                    html_escape(x.query_variant.as_deref().unwrap_or("none")),
+                    html_escape(y.query_variant.as_deref().unwrap_or("none")),
+                ),
+                _ => "<p>HTTP request latency was not captured in both artifacts; comparison verdict is INCONCLUSIVE.</p>".to_string(),
+            };
+            format!(
+                "<!doctype html><html lang=\"en\"><meta charset=utf-8><meta name=viewport content=\"width=device-width, initial-scale=1\"><title>PostgreSQL comparison</title><style>body{{font:15px/1.6 system-ui,-apple-system,BlinkMacSystemFont,sans-serif;max-width:960px;margin:2rem auto;padding:0 1.25rem;color:#1e293b;background:#f8fafc}}main{{background:white;border:1px solid #e2e8f0;border-radius:12px;padding:2rem;box-shadow:0 1px 3px rgba(0,0,0,0.05)}}h1{{font-size:1.75rem;margin-top:0;color:#0f172a}}h2{{font-size:1.25rem;margin-top:2rem;margin-bottom:0.75rem;color:#1e293b;border-bottom:1px solid #f1f5f9;padding-bottom:0.5rem}}.meta{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;background:#f8fafc;padding:1rem;border-radius:8px;border:1px solid #e2e8f0;margin-bottom:1.5rem}}.meta-item dt{{font-size:0.8rem;text-transform:uppercase;color:#64748b;font-weight:600}}.meta-item dd{{margin:0;font-size:0.95rem;font-weight:500;color:#0f172a}}table{{border-collapse:collapse;width:100%;margin:1rem 0;font-size:0.95rem}}th{{background:#f8fafc;font-weight:600;color:#475569}}td,th{{text-align:left;padding:0.75rem 1rem;border-bottom:1px solid #e2e8f0}}code{{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;background:#f1f5f9;padding:0.2rem 0.4rem;border-radius:4px;font-size:0.875em}}.verdict{{background:#eff6ff;border-left:4px solid #3b82f6;padding:0.75rem 1rem;border-radius:0 6px 6px 0;margin:1.5rem 0}}.footnote{{font-size:0.85rem;color:#64748b;margin-top:2rem;border-top:1px solid #e2e8f0;padding-top:1rem}}@media(prefers-color-scheme:dark){{body{{background:#0b0f17;color:#e2e8f0}}main{{background:#111827;border-color:#1f2937;box-shadow:none}}h1{{color:#f8fafc}}h2{{color:#f1f5f9;border-color:#1f2937}}.meta{{background:#1a2234;border-color:#1f2937}}.meta-item dt{{color:#94a3b8}}.meta-item dd{{color:#f8fafc}}th{{background:#1a2234;color:#cbd5e1}}td,th{{border-color:#1f2937}}code{{background:#1f2937;color:#e2e8f0}}.verdict{{background:#172554;border-color:#60a5fa}}.footnote{{border-color:#1f2937;color:#94a3b8}}}}</style><main><h1>PostgreSQL comparison</h1><div class=\"meta\"><div class=\"meta-item\"><dt>Before</dt><dd>{}</dd></div><div class=\"meta-item\"><dt>After</dt><dd>{}</dd></div><div class=\"meta-item\"><dt>Database</dt><dd>{} → {}</dd></div><div class=\"meta-item\"><dt>Matched query deltas</dt><dd>{}</dd></div></div>{}{}{}<p class=\"footnote\">PostgreSQL execution time is cumulative execution time in milliseconds, not request wall-clock latency. Request latency is one-trial evidence; it does not estimate run-to-run variation.</p></main></html>",
+                a.captured_at,
+                b.captured_at,
+                html_escape(&a.database),
+                html_escape(&b.database),
+                matched_count,
+                html_queries,
+                html_indexes,
+                html_workload,
+            )
+        }
         ReportFormat::Json => serde_json::to_string_pretty(
-            &serde_json::json!({"schema_version":1,"before":safe_a,"after":safe_b,"before_run":before_run,"after_run":after_run,"verdict":"INCONCLUSIVE: single-trial comparisons are not statistically validated"}),
+            &serde_json::json!({"schema_version":1,"before":safe_a,"after":safe_b,"before_run":before_run,"after_run":after_run,"matched_count":matched_count,"verdict":"INCONCLUSIVE: single-trial comparisons are not statistically validated"}),
         )?,
     };
     if let Some(parent) = output.parent() {
@@ -2010,5 +2219,93 @@ mod tests {
         .unwrap();
         assert!(reset.queries.is_empty());
         assert_eq!(reset.capture_issues.len(), 1);
+    }
+    #[test]
+    fn report_renders_html_tables_and_matched_query_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let before_dir = dir.path().join("before");
+        let after_dir = dir.path().join("after");
+        fs::create_dir_all(&before_dir).unwrap();
+        fs::create_dir_all(&after_dir).unwrap();
+
+        let before_snap = test_snapshot(vec![query_stat(10, 100.0, 20.0)]);
+        let after_snap = test_snapshot(vec![query_stat(10, 50.0, 10.0)]);
+        fs::write(
+            before_dir.join("investigation.json"),
+            serde_json::to_vec_pretty(&before_snap).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            after_dir.join("investigation.json"),
+            serde_json::to_vec_pretty(&after_snap).unwrap(),
+        )
+        .unwrap();
+
+        let html_out = dir.path().join("report.html");
+        report(
+            before_dir.clone(),
+            after_dir.clone(),
+            ReportFormat::Html,
+            html_out.clone(),
+        )
+        .unwrap();
+        let html_content = fs::read_to_string(&html_out).unwrap();
+        assert!(html_content.contains("<h2>PostgreSQL query deltas</h2>"));
+        assert!(html_content.contains("<table><thead><tr><th>Query ID</th>"));
+        assert!(html_content.contains("Matched query deltas"));
+
+        let md_out = dir.path().join("report.md");
+        report(
+            before_dir,
+            after_dir,
+            ReportFormat::Markdown,
+            md_out.clone(),
+        )
+        .unwrap();
+        let md_content = fs::read_to_string(&md_out).unwrap();
+        assert!(md_content.contains("## Matched PostgreSQL query deltas"));
+        assert!(md_content.contains("| `99` | 10 → 10 | 100.00 → 50.00 ms (-50.0%) |"));
+    }
+    #[test]
+    fn diagnose_plan_only_succeeds_for_both_array_and_object() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan_array = dir.path().join("plan_array.json");
+        let plan_obj = dir.path().join("plan_obj.json");
+
+        fs::write(
+            &plan_array,
+            serde_json::to_string(&serde_json::json!([
+                {
+                    "Plan": {
+                        "Node Type": "Seq Scan",
+                        "Relation Name": "orders",
+                        "Plan Rows": 10,
+                        "Actual Rows": 20,
+                        "Actual Loops": 1,
+                        "Rows Removed by Filter": 20000,
+                        "Filter": "tenant_id = 1"
+                    }
+                }
+            ]))
+            .unwrap(),
+        )
+        .unwrap();
+
+        fs::write(
+            &plan_obj,
+            serde_json::to_string(&serde_json::json!({
+                "Plan": {
+                    "Node Type": "Sort",
+                    "Sort Method": "external merge",
+                    "Sort Space Type": "Disk"
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert!(diagnose(None, Some(plan_array)).is_ok());
+        assert!(diagnose(None, Some(plan_obj)).is_ok());
+        assert!(diagnose(None, None).is_err());
     }
 }

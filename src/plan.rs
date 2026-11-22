@@ -90,10 +90,15 @@ pub struct PlanFinding {
 impl PlanDocument {
     pub fn parse(value: Value, keep_raw: bool) -> Result<Self> {
         let raw = keep_raw.then(|| value.clone());
-        let root = value
-            .as_array()
-            .and_then(|items| items.first())
-            .context("EXPLAIN JSON must be a non-empty array")?;
+        let root = if let Some(items) = value.as_array() {
+            items
+                .first()
+                .context("EXPLAIN JSON must be a non-empty array")?
+        } else if value.is_object() {
+            &value
+        } else {
+            anyhow::bail!("EXPLAIN JSON must be a non-empty array or an object");
+        };
         let mut doc: Self = serde_json::from_value(root.clone())
             .context("invalid PostgreSQL JSON EXPLAIN document")?;
         doc.raw = raw;
@@ -108,18 +113,20 @@ impl PlanDocument {
                 && let (Some(estimated), Some(actual), Some(removed)) =
                     (n.plan_rows, n.actual_rows_per_loop, n.rows_removed_by_filter_per_loop)
             {
-                    let observed = actual + removed;
-                    if observed >= 10_000.0 && actual / observed.max(1.0) < 0.1 && n.filter.is_some() {
-                        out.push(PlanFinding {
-                            rule_id: "SEQ_SCAN_HIGH_FILTER_COST",
-                            severity: "medium",
-                            confidence: "medium",
-                            node_type: n.node_type.clone(),
-                            relation: relation.clone(),
-                            evidence: format!("{} candidate rows scanned across loops; {:.1}% returned after filtering (planner estimate: {:.0} rows)", observed, actual / observed.max(1.0) * 100.0, estimated),
-                            next_step: "Inspect predicate selectivity and existing indexes; test a candidate index under the same workload. A sequential scan can still be optimal for broad scans.",
-                        });
-                    }
+                let loops = n.actual_loops.unwrap_or(1.0);
+                let observed_per_loop = actual + removed;
+                let total_observed = observed_per_loop * loops;
+                if total_observed >= 10_000.0 && actual / observed_per_loop.max(1.0) < 0.1 && n.filter.is_some() {
+                    out.push(PlanFinding {
+                        rule_id: "SEQ_SCAN_HIGH_FILTER_COST",
+                        severity: "medium",
+                        confidence: "medium",
+                        node_type: n.node_type.clone(),
+                        relation: relation.clone(),
+                        evidence: format!("{} candidate rows scanned across loops; {:.1}% returned after filtering (planner estimate: {:.0} rows)", total_observed, actual / observed_per_loop.max(1.0) * 100.0, estimated),
+                        next_step: "Inspect predicate selectivity and existing indexes; test a candidate index under the same workload. A sequential scan can still be optimal for broad scans.",
+                    });
+                }
             }
             if let (Some(est), Some(actual_total)) = (n.plan_rows, n.actual_rows_per_loop) {
                 let loops = n.actual_loops.unwrap_or(1.0);
@@ -210,5 +217,23 @@ mod tests {
         let ids: Vec<_> = p.findings().into_iter().map(|f| f.rule_id).collect();
         assert!(ids.contains(&"SEQ_SCAN_HIGH_FILTER_COST"));
         assert!(ids.contains(&"SORT_SPILL_TO_DISK"));
+    }
+    #[test]
+    fn parses_object_root_format_and_multiloop_filter_cost() {
+        let obj = serde_json::json!({
+            "Plan": {
+                "Node Type": "Seq Scan",
+                "Relation Name": "orders",
+                "Plan Rows": 100,
+                "Actual Rows": 50,
+                "Actual Loops": 4,
+                "Rows Removed by Filter": 2500,
+                "Filter": "status = 'pending'"
+            }
+        });
+        let p = PlanDocument::parse(obj, false).unwrap();
+        let findings = p.findings();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule_id, "SEQ_SCAN_HIGH_FILTER_COST");
     }
 }
